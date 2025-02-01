@@ -11,9 +11,10 @@ from transformers import get_scheduler
 import logging
 import os
 from typing import List
+import fire
 
 
-def tokenize_data(df, tokenizer, max_length=128):
+def tokenize_data(df, tokenizer, max_length=512):
     return tokenizer(
         df["prompt"].tolist(),
         padding=True,
@@ -37,12 +38,6 @@ class TextClassificationDataset(Dataset):
 
     def __len__(self):
         return len(self.labels)
-
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
 
 
 def train_epoch(model, train_loader, optimizer, lr_scheduler, device):
@@ -104,6 +99,7 @@ def train(
     optimizer,
     lr_scheduler,
     device,
+    logger,
     num_epochs: int,
     save_dir: str = "./bert-text-classification-model",
     metric: str = "f1",
@@ -173,6 +169,7 @@ def evaluate(
     test_loader,
     test_df,
     device,
+    logger,
 ):
     model.eval()
     test_results = []
@@ -202,7 +199,23 @@ def evaluate(
     return results_df
 
 
+def preprocess(path: str, num_samples_per_class: int):
+    df = pd.read_csv(path)
+
+    balanced_df = (
+        df.groupby("need_retrieval", group_keys=False)
+        .apply(
+            lambda x: x.sample(num_samples_per_class, random_state=42),
+            include_groups=False,
+        )
+        .reset_index(drop=True)
+    )
+    balanced_df = balanced_df.sample(frac=1, random_state=42).reset_index(drop=True)
+    return balanced_df
+
+
 def save_training_plots(
+    logger,
     train_losses: List[float],
     val_losses: List[float],
     train_accuracies: List[float],
@@ -246,71 +259,65 @@ def save_training_plots(
     logger.info(f"Plots saved in {save_dir}/training_metrics.png")
 
 
-def preprocess(path: str, num_samples_per_class: int):
-    df = pd.read_csv(path)
+def get_dataset(df, tokenizer):
+    df_encodings = tokenize_data(df, tokenizer)
 
-    balanced_df = (
-        df.groupby("need_retrieval", group_keys=False)
-        .apply(
-            lambda x: x.sample(num_samples_per_class, random_state=42),
-            include_groups=False,
-        )
-        .reset_index(drop=True)
-    )
-    balanced_df = balanced_df.sample(frac=1, random_state=42).reset_index(drop=True)
-    return balanced_df
-
-
-def get_datasets(train_df, val_df, test_df, tokenizer):
-    train_encodings = tokenize_data(train_df, tokenizer)
-    val_encodings = tokenize_data(val_df, tokenizer)
-    test_encodings = tokenize_data(test_df, tokenizer)
-
-    train_labels = train_df["need_retrieval"].tolist()
-    val_labels = val_df["need_retrieval"].tolist()
-    test_labels = test_df["need_retrieval"].tolist()
+    df_labels = df["need_retrieval"].tolist()
 
     # saving the indices of specific samples in the dataset so that I can easily retrieve them later when needed
-    train_indices = train_df.index.tolist()
-    val_indices = val_df.index.tolist()
-    test_indices = test_df.index.tolist()
+    df_indices = df.index.tolist()
 
-    train_dataset = TextClassificationDataset(
-        train_encodings, train_labels, train_indices
-    )
-    val_dataset = TextClassificationDataset(val_encodings, val_labels, val_indices)
-    test_dataset = TextClassificationDataset(test_encodings, test_labels, test_indices)
-    return train_dataset, val_dataset, test_dataset
+    dataset = TextClassificationDataset(df_encodings, df_labels, df_indices)
+    return dataset
 
 
-if __name__ == "__main__":
-    balanced_df = preprocess("../data/merged.csv", num_samples_per_class=1500)
+def main(
+    file_path="../data/merged.csv",
+    num_samples_per_class=1500,
+    tokenizer_path="bert-base-uncased",
+    model_path="bert-base-uncased",
+    batch_size=4,
+    learning_rate=5e-5,
+    num_epochs=3,
+    save_dir="./bert-text-classification-model",
+    metric="f1",
+    early_stopping_patience=3,
+    output_csv="../data/predictions.csv",
+):
+    """
+    Train and evaluate a BERT-based text classification model.
 
+    Args:
+        file_path (str): Path to the input CSV file.
+        num_samples_per_class (int): Number of samples per class for balancing.
+        tokenizer_path (str): Pretrained tokenizer path.
+        model_path (str): Pretrained model path.
+        batch_size (int): Batch size for training and evaluation.
+        learning_rate (float): Learning rate for the optimizer.
+        num_epochs (int): Number of training epochs.
+        save_dir (str): Directory to save the trained model.
+        metric (str): Evaluation metric (e.g., 'f1', 'accuracy').
+        early_stopping_patience (int): Patience for early stopping.
+        output_csv (str): Path to save the predictions.
+    """
+    balanced_df = preprocess(file_path, num_samples_per_class=num_samples_per_class)
     train_df, temp_df = train_test_split(balanced_df, test_size=0.3, random_state=42)
     val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42)
 
-    tokenizer_path = "./bert-text-classification-model"
     tokenizer = BertTokenizer.from_pretrained(tokenizer_path)
-
-    model_path = "./bert-text-classification-model"
-    num_labels = 2
-
-    model = BertForSequenceClassification.from_pretrained(
-        model_path, num_labels=num_labels
-    )
-
+    model = BertForSequenceClassification.from_pretrained(model_path, num_labels=2)
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     model.to(device)
 
-    train_dataset, val_dataset, test_dataset = get_datasets(
-        train_df, val_df, test_df, tokenizer
-    )
+    train_dataset = get_dataset(train_df, tokenizer)
+    val_dataset = get_dataset(val_df, tokenizer)
+    test_dataset = get_dataset(test_df, tokenizer)
 
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    optimizer = AdamW(model.parameters(), lr=5e-5)
-    num_epochs = 3
+    optimizer = AdamW(model.parameters(), lr=learning_rate)
     num_training_steps = num_epochs * len(train_loader)
     lr_scheduler = get_scheduler(
         "linear",
@@ -319,6 +326,11 @@ if __name__ == "__main__":
         num_training_steps=num_training_steps,
     )
 
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+    logger = logging.getLogger(__name__)
+
     metrics = train(
         model=model,
         train_loader=train_loader,
@@ -326,26 +338,40 @@ if __name__ == "__main__":
         optimizer=optimizer,
         lr_scheduler=lr_scheduler,
         device=device,
-        num_epochs=4,
-        save_dir="./bert-text-classification-model",
-        metric="f1",
-        early_stopping_patience=3,
+        num_epochs=num_epochs,
+        save_dir=save_dir,
+        metric=metric,
+        early_stopping_patience=early_stopping_patience,
+        logger=logger,
     )
+
+    train_losses = metrics["train_losses"]
+    val_losses = metrics["val_losses"]
+    train_f1_scores = metrics["train_f1_scores"]
+    val_f1_scores = metrics["val_f1_scores"]
+    train_accuracies = metrics["train_accuracies"]
+    val_accuracies = metrics["val_accuracies"]
 
     save_training_plots(
-        train_losses=metrics["train_losses"],
-        val_losses=metrics["val_losses"],
-        train_accuracies=metrics["train_accuracies"],
-        val_accuracies=metrics["val_accuracies"],
-        train_f1_scores=metrics["train_f1_scores"],
-        val_f1_scores=metrics["val_f1_scores"],
-        save_dir="../data/plots",
+        logger,
+        train_losses,
+        val_losses,
+        train_accuracies,
+        val_accuracies,
+        train_f1_scores,
+        val_f1_scores,
     )
-
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
     results_df = evaluate(
-        model=model, test_loader=test_loader, test_df=test_df, device=device
+        model=model,
+        test_loader=test_loader,
+        test_df=test_df,
+        device=device,
+        logger=logger,
     )
 
-    results_df.to_csv("../data/predictions.csv")
+    results_df.to_csv(output_csv)
+
+
+if __name__ == "__main__":
+    fire.Fire(main)
