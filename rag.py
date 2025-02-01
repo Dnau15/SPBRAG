@@ -2,7 +2,7 @@ import fire
 import logging
 from pymilvus import MilvusClient
 from sentence_transformers import SentenceTransformer
-from tqdm import trange
+from tqdm import tqdm
 from langchain_huggingface import HuggingFaceEndpoint
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
@@ -13,9 +13,16 @@ import pandas as pd
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
+logging.getLogger("pymilvus").setLevel(logging.WARNING)
 
 
-def predict_class(model, text, tokenizer, device, max_length=512):
+def predict_class(
+    model: BertForSequenceClassification,
+    text: str,
+    tokenizer: BertTokenizer,
+    device: torch.device,
+    max_length: int = 512,
+) -> int:
     model.eval()
     inputs = tokenizer(
         text, return_tensors="pt", max_length=max_length, truncation=True, padding=True
@@ -27,41 +34,41 @@ def predict_class(model, text, tokenizer, device, max_length=512):
 
 
 def rag_query(
-    llm,
-    question,
-    classificator,
-    tokenizer,
-    milvus_client,
-    device,
-    embedding_model,
-    collection_name,
-    top_k=3,
-    context_len=400,
-):
+    llm: HuggingFaceEndpoint,
+    question: str,
+    classificator: BertForSequenceClassification,
+    tokenizer: BertTokenizer,
+    milvus_client: MilvusClient,
+    device: torch.device,
+    embedding_model: SentenceTransformer,
+    collection_name: str,
+    use_classifier: bool = True,
+    top_k: int = 3,
+    context_len: int = 400,
+) -> tuple[str, int]:
     query_embedding = embedding_model.encode(question).tolist()
 
-    predicted_class = predict_class(classificator, question, tokenizer, device)
+    if use_classifier:
+        predicted_class = predict_class(classificator, question, tokenizer, device)
+    else:
+        predicted_class = 1
 
     search_results = milvus_client.search(
         collection_name, [query_embedding], limit=top_k, output_fields=["text"]
     )
-
     contexts = (
         [hit["entity"]["text"] for hit in search_results[0]] if search_results else []
     )
-
     context_str = " ".join(contexts)[:context_len]
 
     template = (
         "Answer the question based on context:\nContext: {context}\nQuestion: {question}\nAnswer:"
-        if contexts and predicted_class
+        if contexts and (use_classifier and predicted_class)
         else "Answer this question:\nQuestion: {question}\nAnswer:"
     )
 
     prompt_template = PromptTemplate.from_template(template)
-
     llm_chain = prompt_template | llm
-
     chain_input = (
         {"question": question, "context": context_str}
         if contexts
@@ -70,9 +77,11 @@ def rag_query(
     return llm_chain.invoke(chain_input), predicted_class
 
 
-def start_vector_database(collection_name):
+def start_vector_database(
+    collection_name: str, milvus_uri: str = "./data/milvus_demo.db"
+) -> MilvusClient:
     embedding_dim = 768
-    milvus_client = MilvusClient(uri="../data/milvus_demo.db")
+    milvus_client = MilvusClient(uri=milvus_uri)
 
     if milvus_client.has_collection(collection_name):
         milvus_client.drop_collection(collection_name)
@@ -94,21 +103,32 @@ def start_vector_database(collection_name):
     return milvus_client
 
 
-def insert_documents(contexts, milvus_client, embedding_model, collection_name):
+def insert_documents(
+    contexts: list[str],
+    milvus_client: MilvusClient,
+    embedding_model: SentenceTransformer,
+    collection_name: str,
+) -> None:
     documents = [
         {"text": ctx, "embedding": embedding_model.encode(ctx).tolist()}
         for ctx in contexts
     ]
-    for i in trange(0, len(documents), 100):
+    for i in tqdm(range(0, len(documents), 100), disable=True):
         milvus_client.insert(collection_name, documents[i : i + 100])
 
 
-def test_rag_system(num_samples=10):
+def test_rag_system(
+    num_samples: int = 10,
+    collection_name: str = "spbrag",
+    bert_path: str = "./models/bert-text-classification-model",
+    tokenizer_path: str = "./models/bert-text-classification-model",
+    embedding_model_path: str = "sentence-transformers/all-mpnet-base-v2",
+):
     load_dotenv()
-    collection_name = "spbrag"
+
     milvus_client = start_vector_database(collection_name)
 
-    dataset = pd.read_csv("../data/test.csv")
+    dataset = pd.read_csv("./data/test.csv")
 
     contexts = dataset["context"].dropna().unique().tolist()
 
@@ -122,7 +142,7 @@ def test_rag_system(num_samples=10):
         axis=1,
     ).tolist()
 
-    embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
+    embedding_model = SentenceTransformer(embedding_model_path)
     insert_documents(contexts, milvus_client, embedding_model, collection_name)
 
     llm = HuggingFaceEndpoint(
@@ -132,15 +152,14 @@ def test_rag_system(num_samples=10):
         do_sample=False,
     )
 
-    model_path = "./bert-text-classification-model"
     num_labels = 2
     classificator = BertForSequenceClassification.from_pretrained(
-        model_path, num_labels=num_labels
+        bert_path, num_labels=num_labels
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     classificator.to(device)
-    tokenizer = BertTokenizer.from_pretrained("./bert-text-classification-model")
+    tokenizer = BertTokenizer.from_pretrained(tokenizer_path)
 
     logging.info("\nTesting RAG system...\n")
     logging.info("-" * 160)
