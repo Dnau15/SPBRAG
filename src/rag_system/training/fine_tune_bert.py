@@ -1,43 +1,21 @@
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from transformers import BertTokenizer
-from transformers import BertForSequenceClassification, AdamW
+from transformers import (
+    BertForSequenceClassification,
+    BertTokenizer,
+    AdamW,
+    get_scheduler,
+)
 from sklearn.metrics import accuracy_score, f1_score
-import matplotlib.pyplot as plt
 from tqdm import tqdm
-from transformers import get_scheduler
 import logging
-import os
-from typing import List
 import fire
 
-
-def tokenize_data(df, tokenizer, max_length=512):
-    return tokenizer(
-        df["prompt"].tolist(),
-        padding=True,
-        truncation=True,
-        max_length=max_length,
-        return_tensors="pt",
-    )
-
-
-class TextClassificationDataset(Dataset):
-    def __init__(self, encodings, labels, indices):
-        self.encodings = encodings
-        self.labels = labels
-        self.indices = indices
-
-    def __getitem__(self, idx):
-        item = {key: val[idx] for key, val in self.encodings.items()}
-        item["labels"] = torch.tensor(self.labels[idx])
-        item["idx"] = torch.tensor(self.indices[idx])
-        return item
-
-    def __len__(self):
-        return len(self.labels)
+from src.rag_system.data.datasets import TextClassificationDataset
+from src.rag_system.visualization.plot_graphs import save_training_plots
+from src.rag_system.data.data_preprocessing import tokenize_data
 
 
 def train_epoch(model, train_loader, optimizer, lr_scheduler, device):
@@ -101,7 +79,7 @@ def train(
     device,
     logger,
     num_epochs: int,
-    save_dir: str = "./bert-text-classification-model",
+    save_dir: str = "../../../bert-text-classification-model",
     metric: str = "f1",
     early_stopping_patience=None,
 ):
@@ -214,51 +192,6 @@ def preprocess(path: str, num_samples_per_class: int):
     return balanced_df
 
 
-def save_training_plots(
-    logger,
-    train_losses: List[float],
-    val_losses: List[float],
-    train_accuracies: List[float],
-    val_accuracies: List[float],
-    train_f1_scores: List[float],
-    val_f1_scores: List[float],
-    save_dir: str = "../data/plots",
-) -> None:
-    os.makedirs(save_dir, exist_ok=True)
-
-    plt.figure(figsize=(12, 8))
-
-    plt.subplot(3, 1, 1)
-    plt.plot(train_losses, label="Training Loss")
-    plt.plot(val_losses, label="Validation Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training and Validation Loss")
-    plt.legend()
-
-    plt.subplot(3, 1, 2)
-    plt.plot(train_accuracies, label="Training Accuracy")
-    plt.plot(val_accuracies, label="Validation Accuracy")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.title("Training and Validation Accuracy")
-    plt.legend()
-
-    plt.subplot(3, 1, 3)
-    plt.plot(train_f1_scores, label="Training F1 Score")
-    plt.plot(val_f1_scores, label="Validation F1 Score")
-    plt.xlabel("Epoch")
-    plt.ylabel("F1 Score")
-    plt.title("Training and Validation F1 Score")
-    plt.legend()
-
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, "training_metrics.png"))
-    plt.close()
-
-    logger.info(f"Plots saved in {save_dir}/training_metrics.png")
-
-
 def get_dataset(df, tokenizer):
     df_encodings = tokenize_data(df, tokenizer)
 
@@ -272,17 +205,17 @@ def get_dataset(df, tokenizer):
 
 
 def main(
-    file_path="../data/merged.csv",
+    file_path="../../../data/merged.csv",
     num_samples_per_class=1500,
     tokenizer_path="bert-base-uncased",
     model_path="bert-base-uncased",
     batch_size=4,
     learning_rate=5e-5,
     num_epochs=3,
-    save_dir="./bert-text-classification-model",
+    save_dir="../../../bert-text-classification-model",
     metric="f1",
     early_stopping_patience=3,
-    output_csv="../data/predictions.csv",
+    output_csv="../../../data/predictions.csv",
 ):
     """
     Train and evaluate a BERT-based text classification model.
