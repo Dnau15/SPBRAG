@@ -24,7 +24,7 @@ def process_musique(example):
     }
 
 
-def process_nq(example):
+def process_nq_custom(example):
     question = example.get("question", {}).get("text")
 
     # Safe check for the answer field
@@ -43,7 +43,8 @@ def process_nq(example):
 
     # If any field is None, return None to skip the example
     if question is None or answer is None or context is None:
-        return {"question": question, "answer": None, "context": None}
+        print(question)
+        return {"question": None, "answer": None, "context": None}
 
     return {"question": question, "answer": answer, "context": context}
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from rag_system.evaluation.metrics import compute_em, compute_f1
-from rag_system.data.data_preprocessing import process_nq, process_musique
+from rag_system.data.data_preprocessing import process_nq_custom, process_musique
 from rag_system.models.bert_classifier import predict_class
 from rag_system.data.data_loading import load_custom_dataset
 
@@ -32,15 +32,17 @@ def load_data(
     musique_path: Optional[Path] = None,
 ):
     if nq_path is None:
-        nq_path = Path(PROJECT_ROOT, "data/nq_val")
+        nq_path = Path(PROJECT_ROOT, "./data/nq_val")
     if musique_path is None:
         musique_path = Path(PROJECT_ROOT, "./data/musique")
 
     nq = load_custom_dataset(nq_path, num_test_samples)
     musique = load_custom_dataset(musique_path, num_test_samples)
 
-    nq_processed = nq.map(process_nq)  # , remove_columns=nq.column_names)
-    nq_processed = nq_processed.filter(lambda example: all(value is not None for value in example.values()))
+    nq_processed = nq.map(process_nq_custom)
+    nq_processed = nq_processed.filter(
+        lambda example: all(value is not None for value in example.values())
+    )
     nq_processed = nq_processed.remove_columns(
         [
             "id",
@@ -49,9 +51,12 @@ def load_data(
             "annotations",
         ]
     )
+    print(nq_processed)
 
     musique_processed = musique.map(process_musique)
-    musique_processed = musique_processed.filter(lambda example: all(value is not None for value in example.values()))
+    musique_processed = musique_processed.filter(
+        lambda example: all(value is not None for value in example.values())
+    )
     musique_processed = musique_processed.remove_columns(
         ["id", "paragraphs", "question_decomposition", "answer_aliases", "answerable"]
     )
@@ -59,7 +64,10 @@ def load_data(
     df_nq = pd.DataFrame(nq_processed).rename(columns={"answer": "answers"})
     df_musique = pd.DataFrame(musique_processed).rename(columns={"answer": "answers"})
     df = pd.concat([df_nq, df_musique], ignore_index=True)
-    df.drop(columns=['context']).to_csv(Path(PROJECT_ROOT, "./data/question.csv"), index=False, sep='\t')
+    out_path = Path(PROJECT_ROOT, "./data/question.csv")
+    print(out_path)
+    print(df)
+    df.drop(columns=["context"]).to_csv(out_path, index=False, sep="\t")
     df["need_retrieval"] = 1
     return df
 
@@ -184,7 +192,9 @@ def evaluate_rag(
         )
 
     results_df = pd.DataFrame(results)
-    results_df.to_csv(Path(PROJECT_ROOT, "./data/rag_evaluation_results.csv"), index=False, sep='\t')
+    results_df.to_csv(
+        Path(PROJECT_ROOT, "./data/rag_evaluation_results.csv"), index=False, sep="\t"
+    )
 
     logger.info(f"F1 Score: {results_df['f1_score'].mean():.4f}")
     logger.info(f"Lenient EM Score: {results_df['em_score'].mean():.4f}")
@@ -212,7 +222,9 @@ def main(
         milvus_uri,
         logger,
     )
-    results_df.drop(columns=['context']).to_csv(Path(PROJECT_ROOT, "./data/results.csv"), index=False, sep='\t')
+    results_df.drop(columns=["context"]).to_csv(
+        Path(PROJECT_ROOT, "./data/results.csv"), index=False, sep="\t"
+    )
 
 
 if __name__ == "__main__":
