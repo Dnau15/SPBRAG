@@ -14,20 +14,37 @@ def tokenize_data(df, tokenizer, max_length=512):
     )
 
 
+def process_musique(example):
+    return {
+        "question": example["question"],
+        "answer": example["answer"],
+        "context": " ".join(
+            [p["paragraph_text"] for p in example["paragraphs"] if p["is_supporting"]]
+        ),
+    }
+
+
 def process_nq(example):
-    question = example["question"]["text"]
-    answer = ""
+    question = example.get("question", {}).get("text")
+
+    # Safe check for the answer field
+    answer = None
     if (
-        example["annotations"]
-        and example["annotations"]["short_answers"]
-        and example["annotations"]["short_answers"][0]["text"]
+        example.get("annotations")
+        and example["annotations"].get("short_answers")
+        and len(example["annotations"]["short_answers"]) > 0
+        and example["annotations"]["short_answers"][0].get("text")
     ):
         answer = example["annotations"]["short_answers"][0]["text"][0]
+
     tokens = example["document"]["tokens"]
-    context_tokens = [
-        t for t, h in zip(tokens["token"], tokens["is_html"]) if not h
-    ]  # Super comment
+    context_tokens = [t for t, h in zip(tokens["token"], tokens["is_html"]) if not h]
     context = " ".join(context_tokens)
+
+    # If any field is None, return None to skip the example
+    if question is None or answer is None or context is None:
+        return {"question": question, "answer": None, "context": None}
+
     return {"question": question, "answer": answer, "context": context}
 
 
