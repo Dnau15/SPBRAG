@@ -2,17 +2,22 @@ import fire
 import logging
 import torch
 import pandas as pd
-from datasets import load_from_disk
 from sentence_transformers import SentenceTransformer
 from pymilvus import MilvusClient
 from langchain_huggingface import HuggingFaceEndpoint
 from langchain_core.prompts import PromptTemplate
 from transformers import BertForSequenceClassification, BertTokenizer
 from tqdm import tqdm
+from pathlib import Path
+from typing import Optional
 
-from src.rag_system.evaluation.metrics import compute_em, compute_f1
-from src.rag_system.data.data_preprocessing import process_nq
-from src.rag_system.models.bert_classifier import predict_class
+from rag_system.evaluation.metrics import compute_em, compute_f1
+from rag_system.data.data_preprocessing import process_nq, process_musique
+from rag_system.models.bert_classifier import predict_class
+from rag_system.data.data_loading import load_custom_dataset
+
+# Get project root (where this script resides)
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -20,18 +25,41 @@ logging.basicConfig(
 logging.getLogger("transformers").setLevel(logging.WARNING)
 
 
-def load_data():
-    nq = load_from_disk("./data/nq_val")
-    nq = nq.select(range(30))
-    # trivia = load_from_disk("./data/trivia_train")
+# TODO Rewrite it and add script to dataset creation that downloads and preprocess dataset
+def load_data(
+    num_test_samples: int = 30,
+    nq_path: Optional[Path] = None,
+    musique_path: Optional[Path] = None,
+):
+    if nq_path is None:
+        nq_path = Path(PROJECT_ROOT, "data/nq_val")
+    if musique_path is None:
+        musique_path = Path(PROJECT_ROOT, "./data/musique")
 
-    nq_processed = nq.map(process_nq)
-    # trivia_processed = trivia.map(process_trivia)
+    nq = load_custom_dataset(nq_path, num_test_samples)
+    musique = load_custom_dataset(musique_path, num_test_samples)
 
-    df = pd.DataFrame(nq_processed).rename(columns={"answer": "answers"})
-    # TODO
-    # df_trivia = pd.DataFrame(trivia_processed).rename(columns={"answer": "answers"})
-    # df = pd.concat([df_nq, df_trivia], ignore_index=True)
+    nq_processed = nq.map(process_nq)  # , remove_columns=nq.column_names)
+    nq_processed = nq_processed.filter(lambda example: all(value is not None for value in example.values()))
+    nq_processed = nq_processed.remove_columns(
+        [
+            "id",
+            "document",
+            "long_answer_candidates",
+            "annotations",
+        ]
+    )
+
+    musique_processed = musique.map(process_musique)
+    musique_processed = musique_processed.filter(lambda example: all(value is not None for value in example.values()))
+    musique_processed = musique_processed.remove_columns(
+        ["id", "paragraphs", "question_decomposition", "answer_aliases", "answerable"]
+    )
+
+    df_nq = pd.DataFrame(nq_processed).rename(columns={"answer": "answers"})
+    df_musique = pd.DataFrame(musique_processed).rename(columns={"answer": "answers"})
+    df = pd.concat([df_nq, df_musique], ignore_index=True)
+    df.drop(columns=['context']).to_csv(Path(PROJECT_ROOT, "./data/question.csv"), index=False, sep='\t')
     df["need_retrieval"] = 1
     return df
 
@@ -156,7 +184,7 @@ def evaluate_rag(
         )
 
     results_df = pd.DataFrame(results)
-    results_df.to_csv("rag_evaluation_results.csv", index=False)
+    results_df.to_csv(Path(PROJECT_ROOT, "./data/rag_evaluation_results.csv"), index=False, sep='\t')
 
     logger.info(f"F1 Score: {results_df['f1_score'].mean():.4f}")
     logger.info(f"Lenient EM Score: {results_df['em_score'].mean():.4f}")
@@ -166,14 +194,15 @@ def evaluate_rag(
 
 
 def main(
-    bert_path="./models/bert-text-classification-model",
-    tokenizer_path="./models/bert-text-classification-model",
-    embedding_model_path="sentence-transformers/all-mpnet-base-v2",
-    milvus_uri="./data/milvus_demo.db",
-    collection_name="rag_eval",
+    bert_path: str = "./models/bert-text-classification-model",
+    tokenizer_path: str = "./models/bert-text-classification-model",
+    embedding_model_path: str = "sentence-transformers/all-mpnet-base-v2",
+    milvus_uri: str = "./data/milvus_demo.db",
+    collection_name: str = "rag_eval",
+    num_test_samples: int = 5,
 ):
     logger = logging.getLogger(__name__)
-    df = load_data()
+    df = load_data(num_test_samples=num_test_samples)
     results_df = evaluate_rag(
         df,
         collection_name,
@@ -183,7 +212,7 @@ def main(
         milvus_uri,
         logger,
     )
-    results_df.to_csv("./data/results.csv", index=False)
+    results_df.drop(columns=['context']).to_csv(Path(PROJECT_ROOT, "./data/results.csv"), index=False, sep='\t')
 
 
 if __name__ == "__main__":
