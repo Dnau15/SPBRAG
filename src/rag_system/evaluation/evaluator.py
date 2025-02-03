@@ -8,14 +8,19 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from rag_system.evaluation.metrics import compute_em, compute_f1
-from rag_system.data.data_preprocessing import (
-    process_nq_new1,
-    process_musique_new1,
-    process_mmlu_new1,
-    process_arc_new1,
+from rag_system.data.dataset_creation import (
+    create_mmlu_dataset,
+    create_arc_dataset,
+    create_musique_dataset,
+    create_nq_dataset,
+)
+from rag_system.data.data_loading import (
+    load_arc_dataset,
+    load_mmlu_dataset,
+    load_musique_dataset,
+    load_nq_dataset,
 )
 from rag_system.models.bert_classifier import predict_class
-from rag_system.data.data_loading import load_custom_dataset
 from rag_system.retrieval.rag import RAGPipeline
 
 # Get project root (where this script resides)
@@ -41,58 +46,22 @@ def load_test_data(
     if arc_path is None:
         arc_path = Path(PROJECT_ROOT, "./data/arc_test")
 
-    nq = load_custom_dataset(nq_path, num_test_samples)
-    musique = load_custom_dataset(musique_path, num_test_samples)
-    mmlu = load_custom_dataset(mmlu_path, num_test_samples)
-    arc = load_custom_dataset(arc_path, num_test_samples)
+    if not arc_path.is_dir():
+        create_arc_dataset(750)
+    if not mmlu_path.is_dir():
+        create_mmlu_dataset(750)
+    if not musique_path.is_dir():
+        create_musique_dataset(750)
+    if not nq_path.is_dir():
+        create_nq_dataset(750)
 
-    nq_processed = nq.map(process_nq_new1)
-    nq_processed = nq_processed.filter(
-        lambda example: all(value is not None for value in example.values())
-    )
-    nq_processed = nq_processed.remove_columns(
-        [
-            "id",
-            "document",
-            "long_answer_candidates",
-            "annotations",
-        ]
-    )
-
-    mmlu_processed = mmlu.map(process_mmlu_new1)
-    mmlu_processed = mmlu_processed.filter(
-        lambda example: all(value is not None for value in example.values())
-    )
-    mmlu_processed = mmlu_processed.remove_columns(["choices", "subject"])
-
-    musique_processed = musique.map(process_musique_new1)
-    musique_processed = musique_processed.filter(
-        lambda example: all(value is not None for value in example.values())
-    )
-    musique_processed = musique_processed.remove_columns(
-        ["id", "paragraphs", "question_decomposition", "answer_aliases", "answerable"]
-    )
-
-    arc_processed = arc.map(process_arc_new1)
-    arc_processed = arc_processed.filter(
-        lambda example: all(value is not None for value in example.values())
-    )
-    arc_processed = arc_processed.remove_columns(["choices", "id", "answerKey"])
-
-    df_nq = pd.DataFrame(nq_processed).assign(dataset="nq")
-    df_nq["need_retrieval"] = 1
-
-    df_musique = pd.DataFrame(musique_processed).assign(dataset="musique")
-    df_musique["need_retrieval"] = 1
-
-    df_mmlu = pd.DataFrame(mmlu_processed).assign(dataset="mmlu")
-    df_mmlu["need_retrieval"] = 0
-
-    df_arc = pd.DataFrame(arc_processed).assign(dataset="arc")
-    df_arc["need_retrieval"] = 0
+    df_nq = load_nq_dataset(num_test_samples)
+    df_musique = load_musique_dataset(num_test_samples)
+    df_mmlu = load_mmlu_dataset(num_test_samples)
+    df_arc = load_arc_dataset(num_test_samples)
 
     df = pd.concat([df_nq, df_musique, df_mmlu, df_arc], ignore_index=True)
-    df = df.drop(columns=['answer'])
+    df = df.drop(columns=["answer"])
     out_path = Path(PROJECT_ROOT, "./data/question.csv")
     df.drop(columns=["context"]).to_csv(out_path, index=False, sep="\t")
     logger.info("Dataset loaded")
@@ -140,7 +109,14 @@ def rag_query(
     return llm_chain.invoke(chain_input), predicted_class
 
 
-def evaluate_rag(df, rag: RAGPipeline, use_classifier: bool, logger):
+def evaluate_rag(
+    df,
+    rag: RAGPipeline,
+    use_classifier: bool,
+    logger,
+    top_k: int = 30,
+    context_len: int = 1000,
+):
     contexts = df["context"].dropna().unique().tolist()
     rag.load_vector_database(contexts)
 
@@ -150,11 +126,11 @@ def evaluate_rag(df, rag: RAGPipeline, use_classifier: bool, logger):
         generated_answer, predicted_class, execution_time = (
             rag.query_with_classifier(
                 row["question"],
+                top_k=top_k,
+                context_len=context_len,
             )
             if use_classifier
-            else rag.query_without_classifier(
-                row["question"],
-            )
+            else rag.query_without_classifier(row["question"], top_k=top_k)
         )
         f1 = compute_f1(generated_answer, row["answers"])
         em = compute_em(generated_answer, row["answers"])
@@ -213,10 +189,13 @@ def main(
     num_test_samples: int = 5,
     use_classifier: bool = True,
     model_type: str = "mistral",
+    top_k: int = 30,
+    context_len: int = 1000,
 ):
     logger = logging.getLogger(__name__)
 
     df = load_test_data(logger=logger, num_test_samples=num_test_samples)
+
     rag = RAGPipeline(
         collection_name=collection_name,
         bert_path=bert_path,
@@ -226,6 +205,7 @@ def main(
         llm_repo_id=llm_repo_id,
         llm_max_new_tokens=llm_max_new_tokens,
         model_type=model_type,
+        logger=logger,
     )
 
     evaluate_rag(
@@ -233,6 +213,8 @@ def main(
         rag,
         use_classifier,
         logger,
+        top_k,
+        context_len=1000,
     )
 
 
@@ -244,5 +226,6 @@ if __name__ == "__main__":
     )
     logging.getLogger("pymilvus").setLevel(logging.WARNING)
     logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+    logging.getLogger("ollama").setLevel(logging.WARNING)
 
     fire.Fire(main)

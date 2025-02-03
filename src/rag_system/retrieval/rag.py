@@ -7,14 +7,19 @@ from langchain_core.prompts import PromptTemplate
 from transformers import BertForSequenceClassification, BertTokenizer
 import torch
 import pandas as pd
-from typing import List, Optional
+from typing import List, Optional, Union
 from pathlib import Path
 import os
 import time
 import ollama
 
+
 from src.rag_system.models.bert_classifier import predict_class
-from src.rag_system.data.data_preprocessing import insert_documents
+from src.rag_system.data.data_preprocessing import (
+    insert_documents,
+    preprocess_documents,
+)
+from src.rag_system.models.enums import ModelType
 
 # Get project root (where this script resides)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
@@ -26,39 +31,18 @@ logging.getLogger("pymilvus").setLevel(logging.WARNING)
 logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 
 
-def generate_response(prompt, model_type):
-    if model_type == "ollama":
-        response = ollama.generate(
-            model="llama3:8b",
-            prompt=prompt,
-            options={
-                "temperature": 0.0,
-                "max_tokens": 100,
-                "stop": ["\n", "Question:", "Answer:"],
-            },
-        )
-        return response["response"].strip()
-    elif model_type == "mistral":
-        llm = HuggingFaceEndpoint(
-            repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-            task="text-generation",
-            max_new_tokens=100,
-            do_sample=False,
-        )
-        return llm.invoke(prompt).strip()
-
-
 class RAGPipeline:
     def __init__(
         self,
+        logger,
         collection_name: str = "spbrag",
         bert_path: Optional[str] = None,
         tokenizer_path: str = "bert-base-uncased",
         embedding_model_path: str = "sentence-transformers/all-mpnet-base-v2",
         milvus_uri: Optional[str] = None,
-        model_type: str = "mistral",
+        model_type: Union[ModelType, str] = ModelType.MISTRAL,
         llm_repo_id: str = "mistralai/Mistral-7B-Instruct-v0.2",
-        llm_max_new_tokens: int = 100
+        llm_max_new_tokens: int = 100,
     ):
         bert_path = bert_path or os.path.join(
             PROJECT_ROOT, "./models/bert-text-classification-model"
@@ -75,11 +59,19 @@ class RAGPipeline:
         self.collection_name = collection_name
         self.milvus_uri = milvus_uri
         self.milvus_client = None
+        self.logger = logger
+
+        if isinstance(model_type, str):
+            model_type = model_type.lower().strip()  # Normalize case and trim spaces
+            if model_type in {m.value for m in ModelType}:  # Corrected lookup
+                model_type = ModelType(model_type)
+            else:
+                raise ValueError(f"Invalid model type: {model_type}")
         self.model_type = model_type
 
         self.llm = (
             self._initialize_llm(llm_repo_id, llm_max_new_tokens)
-            if model_type == "mistral"
+            if model_type == ModelType.MISTRAL
             else None
         )
 
@@ -92,12 +84,12 @@ class RAGPipeline:
         )
 
     def _generate_response(self, prompt: str) -> str:
-        if self.model_type == "ollama":
+        if self.model_type == ModelType.OLLAMA:
             response = ollama.generate(
                 model="llama3.2:1b",
                 prompt=prompt,
                 options={
-                    "temperature": 0.0,
+                    "temperature": 0.7,
                     "max_tokens": 100,
                     "stop": ["\n", "Question:", "Answer:"],
                 },
@@ -106,6 +98,7 @@ class RAGPipeline:
         return self.llm.invoke(prompt).strip()
 
     def load_vector_database(self, contexts: List[str]) -> None:
+        self.logger.info("Loading vector database")
         self.milvus_client = MilvusClient(uri=self.milvus_uri)
         if self.milvus_client.has_collection(self.collection_name):
             self.milvus_client.load_collection(collection_name=self.collection_name)
@@ -125,8 +118,16 @@ class RAGPipeline:
                     "params": {"nlist": 128},
                 },
             )
+            self.logger.info("Preprocessing documents")
+            chunked_documents = preprocess_documents(contexts, chunk_size=512)
+
+            self.logger.info("Inserting documents")
+            # Convert to embeddings and insert into Milvus
             insert_documents(
-                contexts, self.milvus_client, self.embedding_model, self.collection_name
+                [doc.page_content for doc in chunked_documents],
+                self.milvus_client,
+                self.embedding_model,
+                self.collection_name,
             )
 
     def query_with_classifier(
