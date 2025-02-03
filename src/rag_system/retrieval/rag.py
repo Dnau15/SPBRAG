@@ -11,6 +11,7 @@ from typing import List, Optional
 from pathlib import Path
 import os
 import time
+import ollama
 
 from src.rag_system.models.bert_classifier import predict_class
 from src.rag_system.data.data_preprocessing import insert_documents
@@ -25,6 +26,28 @@ logging.getLogger("pymilvus").setLevel(logging.WARNING)
 logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 
 
+def generate_response(prompt, model_type):
+    if model_type == "ollama":
+        response = ollama.generate(
+            model="llama3:8b",
+            prompt=prompt,
+            options={
+                "temperature": 0.0,
+                "max_tokens": 100,
+                "stop": ["\n", "Question:", "Answer:"],
+            },
+        )
+        return response["response"].strip()
+    elif model_type == "mistral":
+        llm = HuggingFaceEndpoint(
+            repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+            task="text-generation",
+            max_new_tokens=100,
+            do_sample=False,
+        )
+        return llm.invoke(prompt).strip()
+
+
 class RAGPipeline:
     def __init__(
         self,
@@ -33,9 +56,9 @@ class RAGPipeline:
         tokenizer_path: str = "bert-base-uncased",
         embedding_model_path: str = "sentence-transformers/all-mpnet-base-v2",
         milvus_uri: Optional[str] = None,
+        model_type: str = "mistral",
         llm_repo_id: str = "mistralai/Mistral-7B-Instruct-v0.2",
-        llm_max_new_tokens: int = 100,
-        llm_do_sample: bool = False,
+        llm_max_new_tokens: int = 100
     ):
         bert_path = bert_path or os.path.join(
             PROJECT_ROOT, "./models/bert-text-classification-model"
@@ -49,15 +72,38 @@ class RAGPipeline:
         )
         self.classificator.to(self.device)
         self.tokenizer = BertTokenizer.from_pretrained(tokenizer_path)
-        self.llm = HuggingFaceEndpoint(
-            repo_id=llm_repo_id,
-            task="text-generation",
-            max_new_tokens=llm_max_new_tokens,
-            do_sample=llm_do_sample,
-        )
         self.collection_name = collection_name
         self.milvus_uri = milvus_uri
         self.milvus_client = None
+        self.model_type = model_type
+
+        self.llm = (
+            self._initialize_llm(llm_repo_id, llm_max_new_tokens)
+            if model_type == "mistral"
+            else None
+        )
+
+    def _initialize_llm(self, repo_id: str, max_tokens: int) -> HuggingFaceEndpoint:
+        return HuggingFaceEndpoint(
+            repo_id=repo_id,
+            task="text-generation",
+            max_new_tokens=max_tokens,
+            do_sample=False,
+        )
+
+    def _generate_response(self, prompt: str) -> str:
+        if self.model_type == "ollama":
+            response = ollama.generate(
+                model="llama3.2:1b",
+                prompt=prompt,
+                options={
+                    "temperature": 0.0,
+                    "max_tokens": 100,
+                    "stop": ["\n", "Question:", "Answer:"],
+                },
+            )
+            return response["response"].strip()
+        return self.llm.invoke(prompt).strip()
 
     def load_vector_database(self, contexts: List[str]) -> None:
         self.milvus_client = MilvusClient(uri=self.milvus_uri)
@@ -120,25 +166,20 @@ class RAGPipeline:
             else "Answer this question:\nQuestion: {question}\nAnswer:"
         )
 
-        llm_chain = PromptTemplate.from_template(template) | self.llm
-
-        result = llm_chain.invoke(
-            {"question": question, "context": context_str}
-            if contexts
-            else {"question": question}
+        prompt = PromptTemplate.from_template(template).format(
+            context=context_str, question=question
         )
+
+        result = self._generate_response(prompt)
         execution_time = round(time.time() - start_time, 2)
         return result, predicted_class, execution_time
 
     def query_without_classifier(
         self, question: str, top_k: int = 3, context_len: int = 400
-    ) -> tuple[str, int, float]:
+    ) -> tuple[str, None, float]:
         start_time = time.time()
 
         query_embedding = self.embedding_model.encode(question).tolist()
-        predicted_class = predict_class(
-            self.classificator, question, self.tokenizer, self.device
-        )
 
         search_results = self.milvus_client.search(
             self.collection_name, [query_embedding], limit=top_k, output_fields=["text"]
@@ -154,15 +195,14 @@ class RAGPipeline:
             if contexts
             else "Answer this question:\nQuestion: {question}\nAnswer:"
         )
-        llm_chain = PromptTemplate.from_template(template) | self.llm
 
-        result = llm_chain.invoke(
-            {"question": question, "context": context_str}
-            if contexts
-            else {"question": question}
+        prompt = PromptTemplate.from_template(template).format(
+            context=context_str, question=question
         )
+
+        result = self._generate_response(prompt)
         execution_time = round(time.time() - start_time, 2)
-        return result, predicted_class, execution_time
+        return result, None, execution_time
 
     def test(
         self,
