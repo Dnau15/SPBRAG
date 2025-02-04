@@ -13,13 +13,13 @@ import os
 import time
 import ollama
 
-
 from src.rag_system.models.bert_classifier import predict_class
 from src.rag_system.data.data_preprocessing import (
     insert_documents,
     preprocess_documents,
 )
 from src.rag_system.models.enums import ModelType
+from src.rag_system.evaluation.metrics import Latency
 
 # Get project root (where this script resides)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
@@ -60,6 +60,7 @@ class RAGPipeline:
         self.milvus_uri = milvus_uri
         self.milvus_client = None
         self.logger = logger
+        self.latencies = []
 
         if isinstance(model_type, str):
             model_type = model_type.lower().strip()  # Normalize case and trim spaces
@@ -86,12 +87,11 @@ class RAGPipeline:
     def _generate_response(self, prompt: str) -> str:
         if self.model_type == ModelType.OLLAMA:
             response = ollama.generate(
-                model="llama3.2:1b",
+                model="llama3.2",
                 prompt=prompt,
                 options={
-                    "temperature": 0.7,
-                    "max_tokens": 100,
-                    "stop": ["\n", "Question:", "Answer:"],
+                    "temperature": 0.4,
+                    "max_tokens": 250,
                 },
             )
             return response["response"].strip()
@@ -122,6 +122,7 @@ class RAGPipeline:
             chunked_documents = preprocess_documents(contexts, chunk_size=512)
 
             self.logger.info("Inserting documents")
+
             # Convert to embeddings and insert into Milvus
             insert_documents(
                 [doc.page_content for doc in chunked_documents],
@@ -136,15 +137,19 @@ class RAGPipeline:
         top_k: int = 3,
         context_len: int = 400,
     ) -> tuple[str, int, float]:
-        # TODO add time
-
+        db_time = 0
         start_time = time.time()
         predicted_class = predict_class(
             self.classificator, question, self.tokenizer, self.device
         )
 
+        bert_time = round(time.time() - start_time, 2)
+
         contexts = []
-        if predict_class:
+        context_str = ""
+
+        if predicted_class:
+            db_start_time = time.time()
             query_embedding = self.embedding_model.encode(question).tolist()
             search_results = self.milvus_client.search(
                 self.collection_name,
@@ -160,6 +165,7 @@ class RAGPipeline:
             )
 
             context_str = " ".join(contexts)[:context_len]
+            db_time = round(time.time() - db_start_time, 2)
 
         template = (
             "Answer the question based on context:\nContext: {context}\nQuestion: {question}\nAnswer:"
@@ -171,8 +177,19 @@ class RAGPipeline:
             context=context_str, question=question
         )
 
+        llm_start = time.time()
         result = self._generate_response(prompt)
+        llm_time = round(time.time() - llm_start, 2)
         execution_time = round(time.time() - start_time, 2)
+
+        logging.info(f"Bert time: {bert_time}")
+        logging.info(f"DB time: {db_time}")
+        logging.info(f"LLM time: {llm_time}")
+
+        latency = Latency(
+            bert_latency=bert_time, db_latency=db_time, llm_latency=llm_time
+        )
+        self.latencies.append(latency)
         return result, predicted_class, execution_time
 
     def query_without_classifier(
@@ -191,6 +208,9 @@ class RAGPipeline:
             else []
         )
         context_str = " ".join(contexts)[:context_len]
+
+        db_time = round(time.time() - start_time, 2)
+
         template = (
             "Answer the question based on context:\nContext: {context}\nQuestion: {question}\nAnswer:"
             if contexts
@@ -201,8 +221,17 @@ class RAGPipeline:
             context=context_str, question=question
         )
 
+        llm_start = time.time()
         result = self._generate_response(prompt)
+        llm_time = round(time.time() - llm_start, 2)
+
         execution_time = round(time.time() - start_time, 2)
+        logging.info(f"LLM time: {llm_time}")
+        logging.info(f"DB time: {db_time}")
+
+        latency = Latency(bert_latency=0, db_latency=db_time, llm_latency=llm_time)
+        self.latencies.append(latency)
+
         return result, None, execution_time
 
     def test(

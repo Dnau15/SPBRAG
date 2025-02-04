@@ -4,68 +4,15 @@ import pandas as pd
 from langchain_core.prompts import PromptTemplate
 from tqdm import tqdm
 from pathlib import Path
-from typing import Optional
 from dotenv import load_dotenv
 
 from rag_system.evaluation.metrics import compute_em, compute_f1
-from rag_system.data.dataset_creation import (
-    create_mmlu_dataset,
-    create_arc_dataset,
-    create_musique_dataset,
-    create_nq_dataset,
-)
-from rag_system.data.data_loading import (
-    load_arc_dataset,
-    load_mmlu_dataset,
-    load_musique_dataset,
-    load_nq_dataset,
-)
 from rag_system.models.bert_classifier import predict_class
 from rag_system.retrieval.rag import RAGPipeline
+from rag_system.data.data_loading import load_test_data
 
 # Get project root (where this script resides)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-
-
-# TODO Rewrite it and add script to dataset creation that downloads and preprocess dataset
-def load_test_data(
-    logger,
-    num_test_samples: int = 30,
-    nq_path: Optional[Path] = None,
-    musique_path: Optional[Path] = None,
-    mmlu_path: Optional[Path] = None,
-    arc_path: Optional[Path] = None,
-):
-    logger.info("Loading dataset")
-    if nq_path is None:
-        nq_path = Path(PROJECT_ROOT, "./data/nq_val")
-    if musique_path is None:
-        musique_path = Path(PROJECT_ROOT, "./data/musique")
-    if mmlu_path is None:
-        mmlu_path = Path(PROJECT_ROOT, "./data/mmlu_val")
-    if arc_path is None:
-        arc_path = Path(PROJECT_ROOT, "./data/arc_test")
-
-    if not arc_path.is_dir():
-        create_arc_dataset(750)
-    if not mmlu_path.is_dir():
-        create_mmlu_dataset(750)
-    if not musique_path.is_dir():
-        create_musique_dataset(750)
-    if not nq_path.is_dir():
-        create_nq_dataset(750)
-
-    df_nq = load_nq_dataset(num_test_samples)
-    df_musique = load_musique_dataset(num_test_samples)
-    df_mmlu = load_mmlu_dataset(num_test_samples)
-    df_arc = load_arc_dataset(num_test_samples)
-
-    df = pd.concat([df_nq, df_musique, df_mmlu, df_arc], ignore_index=True)
-    df = df.drop(columns=["answer"])
-    out_path = Path(PROJECT_ROOT, "./data/question.csv")
-    df.drop(columns=["context"]).to_csv(out_path, index=False, sep="\t")
-    logger.info("Dataset loaded")
-    return df
 
 
 def rag_query(
@@ -130,7 +77,11 @@ def evaluate_rag(
                 context_len=context_len,
             )
             if use_classifier
-            else rag.query_without_classifier(row["question"], top_k=top_k)
+            else rag.query_without_classifier(
+                row["question"],
+                top_k=top_k,
+                context_len=context_len,
+            )
         )
         f1 = compute_f1(generated_answer, row["answers"])
         em = compute_em(generated_answer, row["answers"])
@@ -175,6 +126,17 @@ def evaluate_rag(
     logger.info(f"Accuracy: {results_df['accuracy'].mean():.4f}")
     logger.info(f"Total time: {total_time}")
 
+    csv_name = (
+        "./data/latency_w_classifier"
+        if use_classifier
+        else "./data/latency_wout_classifier"
+    )
+    csv_name = Path(PROJECT_ROOT, csv_name)
+    latency_df = pd.DataFrame(rag.latencies)
+    latency_df["top_k"] = top_k
+    latency_df["context_len"] = context_len
+    latency_df.to_csv(csv_name, index=False)
+
     # return results_df
 
 
@@ -214,7 +176,7 @@ def main(
         use_classifier,
         logger,
         top_k,
-        context_len=1000,
+        context_len=context_len,
     )
 
 
