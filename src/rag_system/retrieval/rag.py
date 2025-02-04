@@ -13,13 +13,13 @@ import os
 import time
 import ollama
 
-from src.rag_system.models.bert_classifier import predict_class
-from src.rag_system.data.data_preprocessing import (
+from rag_system.models.bert_classifier import predict_class
+from rag_system.data.data_preprocessing import (
     insert_documents,
     preprocess_documents,
 )
-from src.rag_system.models.enums import ModelType
-from src.rag_system.evaluation.metrics import Latency
+from rag_system.models.enums import ModelType
+from rag_system.evaluation.metrics import Latency
 
 # Get project root (where this script resides)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent

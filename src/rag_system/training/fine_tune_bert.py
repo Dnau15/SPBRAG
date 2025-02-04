@@ -13,9 +13,9 @@ from tqdm import tqdm
 import logging
 import fire
 
-from src.rag_system.data.datasets import TextClassificationDataset
-from src.rag_system.visualization.plot_graphs import save_training_plots
-from src.rag_system.data.data_preprocessing import tokenize_data
+from rag_system.data.datasets import TextClassificationDataset
+from rag_system.visualization.plot_graphs import save_training_plots
+from rag_system.data.data_preprocessing import tokenize_data
 
 
 def train_epoch(model, train_loader, optimizer, lr_scheduler, device):

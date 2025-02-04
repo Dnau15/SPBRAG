@@ -1,163 +1,218 @@
-# SPBRAG Searching for Best Practices in Retrieval Augmented Generation
-The main idea of the project is to demonstrate how to use Query Classification model in order to speed up RAG pipeline and increase quality.
-## How it works?
-- **Input**: User query.
-- **Classification Model**: Determines if context is required.
-    - If context is required, the system retrieves relevant documents.
-    - If not, it proceeds directly to generating a response.
-- **Retrieval**: Fetch relevant context from a knowledge base.
-- **Generation**: Generate a response using the query and (if applicable) retrieved context.
-## 🚀 Getting Started
+# SPBRAG - Optimizing Retrieval Augmented Generation Pipelines 🚀
 
-Follow these step-by-step instructions to set up and run the project on your local machine.
+
+Advanced RAG system with dynamic query classification, supporting Llama-3.2 models through Ollama integration.
+
+## 📖 Table of Contents
+- [Overview](#-overview)
+- [Key Features](#-key-features)
+- [System Architecture](#-system-architecture)
+- [Installation](#-installation)
+- [Configuration](#-configuration)
+- [Fine Tuning](#-fine-tuning)
+- [Usage](#-usage)
+---
+
+## 🌟 Overview
+
+SPBRAG enhances RAG pipelines using a hybrid approach:
+1. **BERT-based Query Classification** - Determines context requirement
+2. **Llama-3.2 LLM** - Generates context-aware responses
+3. **Evaluation Framework** - Measures precision/recall of retrieval components
 
 ---
 
-### **Prerequisites**
+## ✨ Key Features
 
-Before you begin, ensure you have the following installed on your system:
-
-- **Python**: Version 3.11 or higher. You can check your Python version by running:
-  ```bash
-  python --version
-  ```
-  If not installed, download it from [python.org](https://www.python.org/downloads/).
-  The project uses python version 3.11
-
-- **Git**: To clone the repository. Verify installation with:
-  ```bash
-  git --version
-  ```
-
-- **Virtual Environment**: It is recommended to use a virtual environment to manage dependencies. You can use `venv` (built-in) or `conda`, `micromamba`.
+- **Multi-Model Support** 🤖  
+  `llama3.2:1B` (fast) and `llama3.2:3B` (high-quality) variants
+- **Automatic Model Handling** ⚙️  
+  One-line model downloads via Ollama
+- **Secure Configuration** 🔑  
+  Environment-based API key management
+- **Flexible Training** 🏋️  
+  Custom BERT fine-tuning capabilities
 
 ---
 
-### **Step 1: Clone the Repository**
+## 📊 Evaluation Metrics
 
-Clone this repository to your local machine using the following command:
+For detailed explanations of our evaluation metrics and interpretation guidelines, see:
+[Metrics Documentation](./docs/metrics.md)
+
+Key tracked metrics include:
+- F1 score and EM score
+- Metrics For Evaluation RAG
+- Classification Accuracy For BERT
+- Latency Benchmarks
+
+---
+## 📚
+To review the progress of my work and my thoughts, I suggest you read:
+[Workflow](./docs/workflow.md)
+---
+
+## 🛠 Installation
+
+### Step 1: System Preparation
+
+#### Install micromamba if missing
 ```bash
-git clone https://github.com/Dnau15/SPBRAG.git
+"${SHELL}" <(curl -L micro.mamba.pm/install.sh)
 ```
 
-Navigate into the project directory:
+#### For fish users
 ```bash
+curl -L micro.mamba.pm/install.sh | sh
+```
+---
+
+### Step 2: Repository Setup
+#### Clone the project
+
+```bash
+git clone https://github.com/Dnau15/SPBRAG.git
 cd SPBRAG
 ```
 
 ---
 
-### **Step 2: Set Up a Virtual Environment**
+### Step 3: Environment Configuration
 
-Create and activate a virtual environment to isolate the project's dependencies:
+#### Create and activate environment, install dependencies
 
-- **Using `venv`**:
-  ```bash
-  python -m venv venv
-  source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-  ```
-
-- **Using `conda`** (if applicable):
-  ```bash
-  conda create -n your-env-name python=3.11
-  conda activate your-env-name
-  ```
-
-- **Using `micromamba`** (if applicable):
-  ```bash
-  micromamba create -n your-env-name python=3.11
-  micromamba activate your-env-name
-  ```
----
-
-### **Step 3: Install Dependencies**
-
-Install the required Python packages by running:
 ```bash
-pip install -r requirements.txt
+micromamba create -n spbrag python=3.11 -y
+micromamba activate spbrag
+
+./setup.sh
 ```
 
-If you encounter any issues during installation, ensure your `pip` is up-to-date:
+#### If you have problems with executing .sh
 ```bash
-pip install --upgrade pip
+chmod +x ./setup.sh
 ```
 
 ---
 
-### **Step 4: Download Pre-trained Models (If Required)**
+### Step 4: LLM Setup
 
-Some components of this project rely on pre-trained models. Follow these steps to download them:
+#### Install Ollama
 
-1. **BERT Model**:
-   - If you want to use trained BERT ensure the path specified in the code (`./models/bert-text-classification-model`) exists.
-   - If you want to train BERT, use the following path `bert-base-uncased`
-   - Download the model weights and place them in the appropriate directory.
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
 
-2. **Sentence Transformers**:
-   - The `sentence-transformers/all-mpnet-base-v2` model will be downloaded automatically when the script runs for the first time. Ensure you have an active internet connection.
+ollama pull llama3.2:1B  # Lightweight version (1B params)
+ollama pull llama3.2:3B  # High-quality version (3B params)
+```
 
 ---
 
-### **Step 5: Configure API Keys**
+## 🔧 Configuration
 
-This project requires API keys for external services. Create a `.env` file in the root directory and add the necessary keys:
+#### If you want to use Huggingface api and don't want to use Ollama 😞
+### API Keys Setup
 
+1. Create `.env` file:
+```bash
+touch .env
+```
+
+2. Add Hugging Face credentials:
 ```env
-HUGGINGFACE_API_KEY=your-huggingface-api-key
+HUGGINGFACE_API_KEY=your_hf_api_key_here
 ```
-
-Replace `your-huggingface-api-key` with your actual API key from [Hugging Face](https://huggingface.co/docs/hub/security-tokens).
 
 ---
 
-### Step 6: Generate the Dataset
+### Python Path Configuration
 
-Before running the project, you need to generate the dataset. Use the provided `dataset.py` script to create the dataset:
+#### Bash/Zsh
+```bash
+export PYTHONPATH="$(pwd)/src:$PYTHONPATH"
+```
+
+#### Fish
+```bash
+set -x PYTHONPATH (pwd)/src $PYTHONPATH
+```
 
 ```bash
-python dataset.py
+#### Windows (Powershell)
+$env:PYTHONPATH = "$(pwd)/src;$env:PYTHONPATH"
 ```
-
-This will generate the necessary dataset files in the `./data/` directory. Ensure that the dataset file (`test.csv`) is created successfully.
 
 ---
 
-### Optional Step: Fine-Tune BERT (If Needed)
+## 🤖 Fine Tuning
 
-If you want to fine-tune the BERT model for your specific task, you can use the `fine_tune_bert.py` script:
+### BERT Models Setup For Training
+ 
+#### Create model directory
 
 ```bash
-python fine_tune_bert.py
+mkdir -p models/bert-text-classification-model
+
 ```
+### Generate Base Dataset for BERT training 
 
-This step is optional but recommended if you need a more tailored model for your dataset. The fine-tuned model will be saved in the `./models/` directory.
-
----
-
-### **Step 7: Run the Project**
-
-Once everything is set up, you can run the project using the following command:
 ```bash
-python rag.py
+python src/rag_system/data/data_creation.py
 ```
 
-For more advanced usage, refer to the CLI options provided by the `fire` library:
+### Fine-tune BERT Classifier
+
 ```bash
-python test_rag_system.py --help
+python src/rag_system/training/fine_tune_bert.py \
+  --file_path=your_path or default \
+  --num_samples_per_class=1500 \
+  --num_epochs=5 \
+  --learning_rate=2e-5
 ```
 
----
-
-### **Additional Notes**
-
-- **Dataset**: Ensure the dataset file (`test.csv`) is available in the `./data/` directory. If not, download it from the provided link or generate it using the preprocessing scripts.
-
-- **Logging**: The project uses Python's built-in `logging` module. Logs are printed to the console and can be redirected to a file if needed.
-
-- **Troubleshooting**:
-  - If you encounter any errors, check the logs for detailed information.
-  - Ensure all dependencies are correctly installed and compatible with your Python version.
+### Dataset Schema
+| Column | Type | Description |
+|--------|------|-------------|
+| query | text | User input |
+| requires_context | bool | Context flag |
+| reference_text | text | Ground truth |
 
 ---
 
-By following these steps, you should have the project up and running smoothly. If you face any issues, feel free to open an issue on the [GitHub Issues page](https://github.com/your-username/your-repo-name/issues). Happy coding! 😊
+## 🚀 Usage
+
+### Standard Evaluation
+
+```bash
+python src/rag_system/evaluation/evaluator.py \
+  --collection_name=TestCollection5 \
+  --model_type=llama \ # or mistral
+```
+
+### Advanced Options
+
+```bash
+# Model Configuration
+--bert_path="google-bert/bert-base-uncased"  # Path to BERT model
+--tokenizer_path="google-bert/bert-base-uncased"  # Custom tokenizer
+--embedding_model_path="sentence-transformers/all-mpnet-base-v2"  # Embedding model
+
+# Vector Database Settings
+--milvus_uri="./data/milvus_demo.db"  # Local Milvus instance path
+--collection_name="rag_eval"  # Collection name for stored embeddings
+
+# LLM Configuration
+--llm_repo_id="mistralai/Mistral-7B-Instruct-v0.2"  # Alternative LLM
+--llm_max_new_tokens=100  # Maximum response length
+--model_type="mistral"  # [llama3|mistral] LLM variant
+
+# Retrieval Parameters
+--top_k=30  # Number of context chunks to retrieve
+--context_len=1000  # Context window size (in tokens)
+
+# Evaluation Settings
+--num_test_samples=5  # Number of test cases to evaluate
+--use_classifier=True  # Enable/disable query classification
+```
+
+
