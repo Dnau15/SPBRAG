@@ -141,8 +141,8 @@ def evaluate_rag(
 
 
 def main(
-    bert_path: str = "./models/bert-text-classification-model",
-    tokenizer_path: str = "./models/bert-text-classification-model",
+    bert_path: str = "google-bert/bert-base-uncased",
+    tokenizer_path: str = "google-bert/bert-base-uncased",
     embedding_model_path: str = "sentence-transformers/all-mpnet-base-v2",
     milvus_uri: str = "./data/milvus_demo.db",
     collection_name: str = "rag_eval",
@@ -159,15 +159,15 @@ def main(
     df = load_test_data(logger=logger, num_test_samples=num_test_samples)
 
     rag = RAGPipeline(
+        logger=logger,
         collection_name=collection_name,
         bert_path=bert_path,
         tokenizer_path=tokenizer_path,
         embedding_model_path=embedding_model_path,
         milvus_uri=milvus_uri,
+        model_type=model_type,
         llm_repo_id=llm_repo_id,
         llm_max_new_tokens=llm_max_new_tokens,
-        model_type=model_type,
-        logger=logger,
     )
 
     evaluate_rag(
