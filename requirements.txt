@@ -1,0 +1,14 @@
+fire==0.7.0
+datasets==3.2.0
+matplotlib==3.10.0
+pandas==2.2.3
+pymilvus==2.5.4
+python-dotenv==1.0.1
+scikit-learn==1.6.1
+sentence_transformers==3.4.1
+tqdm==4.67.1
+transformers==4.48.1
+ollama==0.4.7
+langchain_core==0.3.33
+langchain==0.3.17
+langchain_huggingface==0.1.2

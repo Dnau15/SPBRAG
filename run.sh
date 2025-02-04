@@ -1,0 +1,2 @@
+python src/rag_system/evaluation/evaluator.py --collection_name=TestCollection5 --model_type=ollama --num_test_samples=5 --use_classifier=True --top_k=10 --context_len=10000
+python src/rag_system/evaluation/evaluator.py --collection_name=TestCollection5 --model_type=ollama --num_test_samples=5 --use_classifier=False --top_k=10 --context_len=10000
