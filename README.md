@@ -6,7 +6,7 @@ Advanced RAG system with dynamic query classification, supporting Llama-3.2 mode
 ## 📖 Table of Contents
 - [Overview](#-overview)
 - [Key Features](#-key-features)
-- [System Architecture](#-system-architecture)
+- [Evaluation Metrics](#-evaluation-metrics)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [Fine Tuning](#-fine-tuning)
@@ -102,7 +102,6 @@ chmod +x ./setup.sh
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 
-ollama pull llama3.2:1B  # Lightweight version (1B params)
 ollama pull llama3.2:3B  # High-quality version (3B params)
 ```
 
@@ -186,7 +185,7 @@ python src/rag_system/training/fine_tune_bert.py \
 ```bash
 python src/rag_system/evaluation/evaluator.py \
   --collection_name=TestCollection5 \
-  --model_type=llama \ # or mistral
+  --model_type=ollama \ # or mistral
 ```
 
 ### Advanced Options

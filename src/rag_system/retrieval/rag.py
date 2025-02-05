@@ -87,7 +87,7 @@ class RAGPipeline:
     def _generate_response(self, prompt: str) -> str:
         if self.model_type == ModelType.OLLAMA:
             response = ollama.generate(
-                model="llama3.2",
+                model="llama3.2:3B",
                 prompt=prompt,
                 options={
                     "temperature": 0.4,
